@@ -1,0 +1,395 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(SeuratDisk)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+
+```{r}
+sample <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Secondary\ Projects/jesus_CD40_analysis/global/final/global_integrated.rds")
+```
+
+```{r}
+Idents(sample) <- "cell.type2"
+tnk <- subset(sample, idents = c("TNKCels"))
+```
+
+```{r}
+DefaultAssay(tnk) <- 'ADT'
+# we will use all ADT features for dimensional reduction
+# we set a dimensional reduction name to avoid overwriting the 
+VariableFeatures(tnk) <- rownames(tnk[["ADT"]])
+tnk <- NormalizeData(tnk, normalization.method = 'CLR', margin = 2) %>% 
+  ScaleData() %>% RunPCA(reduction.name = 'apca')
+```
+
+```{r}
+# Identify multimodal neighbors. These will be stored in the neighbors slot, 
+# and can be accessed using bm[['weighted.nn']]
+# The WNN graph can be accessed at bm[["wknn"]], 
+# and the SNN graph used for clustering at bm[["wsnn"]]
+# Cell-specific modality weights can be accessed at bm$RNA.weight
+tnk <- FindMultiModalNeighbors(
+  tnk, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:30, 1:18), modality.weight.name = "RNA.weight"
+)
+```
+
+```{r}
+tnk <- RunUMAP(tnk, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+tnk <- FindClusters(tnk, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE)
+```
+
+```{r}
+tnk <- RunUMAP(tnk, reduction = 'pca', dims = 1:30, assay = 'RNA', 
+              reduction.name = 'rna.umap', reduction.key = 'rnaUMAP_')
+tnk <- RunUMAP(tnk, reduction = 'apca', dims = 1:18, assay = 'ADT', 
+              reduction.name = 'adt.umap', reduction.key = 'adtUMAP_')
+```
+
+```{r}
+DimPlot(tnk, reduction = 'wnn.umap', group.by = "wsnn_res.2", cols = paletteDiscrete(unique(tnk$wsnn_res.2), set = "stallion"), ncol = 1)
+```
+
+
+```{r}
+tnk$condition <- factor(tnk$condition, levels = c("Control","antiCD40"))
+```
+
+```{r}
+ggplot(tnk@meta.data, aes(x=condition, fill=wsnn_res.2)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +  scale_fill_manual(values=as.vector(paletteDiscrete(unique(tnk$wsnn_res.2), set = "stallion"))) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_GEX_wsnn_res.2.csv", quote = FALSE)
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2"
+DefaultAssay(tnk) <- 'ADT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_ADT_wsnn_res.2.csv", quote = FALSE)
+```
+
+```{r}
+DefaultAssay(tnk) <- "ADT"
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD3-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,1))
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD4-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,3.5))
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD8a-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,3.5))
+```
+```{r}
+saveRDS(tnk, "tnk.rds")
+```
+
+```{r}
+Idents(tnk) <- "condition"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_GEX_condition.csv", quote = FALSE)
+```
+
+
+
+# Cleaning
+```{r}
+tnk <- readRDS("./v1/tnk.rds")
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2"
+tnk <- subset(tnk, idents = c("5","7"), invert = TRUE)
+```
+
+```{r}
+# Identify multimodal neighbors. These will be stored in the neighbors slot, 
+# and can be accessed using bm[['weighted.nn']]
+# The WNN graph can be accessed at bm[["wknn"]], 
+# and the SNN graph used for clustering at bm[["wsnn"]]
+# Cell-specific modality weights can be accessed at bm$RNA.weight
+tnk <- FindMultiModalNeighbors(
+  tnk, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:30, 1:18), modality.weight.name = "RNA.weight"
+)
+```
+
+```{r}
+tnk <- RunUMAP(tnk, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+tnk <- FindClusters(tnk, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE)
+```
+
+```{r}
+tnk <- RunUMAP(tnk, reduction = 'pca', dims = 1:30, assay = 'RNA', 
+              reduction.name = 'rna.umap', reduction.key = 'rnaUMAP_')
+tnk <- RunUMAP(tnk, reduction = 'apca', dims = 1:18, assay = 'ADT', 
+              reduction.name = 'adt.umap', reduction.key = 'adtUMAP_')
+```
+
+```{r}
+DimPlot(tnk, reduction = 'wnn.umap', group.by = "wsnn_res.2", cols = paletteDiscrete(unique(tnk$wsnn_res.2.5), set = "stallion"), ncol = 1)
+```
+
+```{r}
+DimPlot(tnk, reduction = 'rna.umap', group.by = "wsnn_res.2.5", cols = paletteDiscrete(unique(tnk$wsnn_res.2.5), set = "stallion"), ncol = 1)
+DimPlot(tnk, reduction = 'adt.umap', group.by = "wsnn_res.2.5", cols = paletteDiscrete(unique(tnk$wsnn_res.2.5), set = "stallion"), ncol = 1)
+```
+
+
+```{r}
+tnk$condition <- factor(tnk$condition, levels = c("Control","antiCD40"))
+```
+
+```{r}
+ggplot(tnk@meta.data, aes(x=condition, fill=wsnn_res.2)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +  scale_fill_manual(values=as.vector(paletteDiscrete(unique(tnk$wsnn_res.2), set = "stallion"))) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_GEX_wsnn_res.2.csv", quote = FALSE)
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2.5"
+DefaultAssay(tnk) <- 'ADT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_ADT_wsnn_res.2.5.csv", quote = FALSE)
+```
+
+```{r}
+DefaultAssay(tnk) <- "ADT"
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD3-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,1))
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD4-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,3.5))
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "CD8a-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,3.5))
+```
+
+```{r}
+DefaultAssay(tnk) <- "SCT"
+
+FeaturePlot(tnk, reduction = 'wnn.umap', features = "Foxp3", split.by = "condition")
+```
+
+```{r}
+VlnPlot(tnk, features = "Foxp3", group.by = "condition")
+```
+
+```{r}
+tnk$condition <- as.character(tnk$condition)
+```
+
+```{r}
+SaveH5Seurat(tnk, filename = "./tnk.h5Seurat")
+```
+
+```{r}
+Convert("./tnk.h5Seurat", dest = "h5ad")
+```
+
+```{r}
+saveRDS(tnk, "tnk.rds")
+```
+
+```{r}
+Idents(tnk) <- "condition"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./tnk_GEX_condition.csv", quote = FALSE)
+```
+
+
+```{r}
+tnk <- readRDS("./final/tnk.rds")
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2"
+tcells <- subset(tnk, idents = c("1","3"))
+```
+
+```{r}
+tcells <- RunUMAP(tcells, reduction = "pca", dims = 1:30)
+tcells <- FindNeighbors(tcells, reduction = "pca", dims = 1:30)
+tcells <- FindClusters(tcells, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5), verbose = FALSE)
+```
+
+```{r}
+DimPlot(tcells, reduction = 'umap', group.by = "SCT_snn_res.0.5", cols = paletteDiscrete(unique(tcells$SCT_snn_res.0.7), set = "stallion"), ncol = 1)
+```
+
+```{r}
+DefaultAssay(tnk) <- "SCT"
+plot_density(tnk, reduction = 'wnn.umap', features = "Ifng")
+```
+
+```{r}
+library(SeuratObject)
+library(ggsignif)
+library(ggpubr)
+```
+
+
+```{r}
+my_comparisons <- list( c("Control", "antiCD40"))
+VlnPlot(tnk, features = c("Ifng"), group.by = "condition", ncol = 3) +
+  stat_compare_means(comparisons = my_comparisons) +
+  ylim(-0.01, 4) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+Idents(tnk) <- "condition"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./final/tnk_DE_condition.csv", quote = FALSE)
+```
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 100, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DoHeatmap(subset(tnk, downsample = 100), features = top10$gene, size = 3) + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))
+```
+
+```{r}
+Idents(tnk) <- "wsnn_res.2.5"
+DefaultAssay(tnk) <- 'SCT'
+rna.markers <- FindAllMarkers(tnk, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+
+```
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DefaultAssay(tnk) <- "SCT"
+Idents(tnk) <- "wsnn_res.2"
+
+DoHeatmap(tnk, features = top10$gene, assay = "SCT", 
+          group.colors = paletteDiscrete(unique(tnk$wsnn_res.2), set = "stallion"), size = 2, angle = 90) + NoLegend() + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))+ 
+    theme(text = element_text(size = 5))
+ggsave(filename="./final/heatmap_GEX_wsnn_res.2.png")
+```
+```{r}
+DefaultAssay(tnk) <- "SCT"
+DotPlot(tnk, features = c("Klra8","Klra4","Klf2","Cd8b1","Cd3d","Cd8a","Prf1","Gzma","Ccl5","Il7r","Selenop","Lef1","Xcl1","Cd226","Ifng","Ctla2a","Cd7"), group.by = "wsnn_res.2", col.min = 0, col.max = 1) + RotatedAxis()
+```
+
+```{r}
+de <- rna.markers
+de$avg_log2FC <- ifelse(de$cluster == "Control", -de$avg_log2FC, de$avg_log2FC)
+
+# add a column of NAs
+de$diffexpressed <- "NO"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP" 
+de$diffexpressed[de$avg_log2FC > 0.58 & de$p_val_adj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+de$diffexpressed[de$avg_log2FC < -0.58 & de$p_val_adj < 0.05] <- "DOWN"
+
+de$delabel <- NA
+de$delabel[de$diffexpressed != "NO"] <- de$gene[de$diffexpressed != "NO"]
+de
+```
+
+```{r}
+library(ggrepel)
+# plot adding up all layers we have seen so far
+ggplot(data=de, aes(x=avg_log2FC, y=-log10(p_val_adj), col=diffexpressed, label = delabel)) +
+        geom_point() + 
+        theme_minimal() +
+        geom_text_repel() +
+        scale_color_manual(values=c("blue", "black", "red")) +
+        geom_vline(xintercept=c(-0.58, 0.58), col="red") +
+        geom_hline(yintercept=-log10(0.05), col="red")
+```
+
+
+
+# Pathway analysis across clusters
+```{r}
+library(clusterProfiler)
+library(DOSE)
+library(enrichplot)
+library(ReactomePA)
+library(ggplot2)
+```
+
+```{r}
+d <- read.csv("./final/tnk_DE_condition.csv")
+d <- filter(d, avg_log2FC > 0.58)
+d <- filter(d, p_val_adj < 0.05)
+d_new <- d[c("gene", "cluster")]
+```
+
+```{r}
+eg <- bitr(as.character(d_new$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+d_new <- filter(d_new, gene %in% eg$SYMBOL)
+d_new_enterzID <- merge(d_new, eg, by.x = "gene", by.y = "SYMBOL")
+d_new_enterzID <- d_new_enterzID[c("ENTREZID", "cluster")]
+geneList <- unstack(d_new_enterzID)
+geneList
+```
+
+```{r}
+ck <- compareCluster(geneCluster = geneList, fun = enrichGO, OrgDb="org.Mm.eg.db")
+ck <- setReadable(ck, OrgDb = "org.Mm.eg.db", keyType="ENTREZID")
+head(ck) 
+```
+
+```{r}
+ego2 <- enrichGO(gene         = geneList$antiCD40,
+                OrgDb         = "org.Mm.eg.db",
+                keyType       = 'ENTREZID',
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+head(summary(ego2))
+```
+
+
+```{r}
+dotplot(ego2, font.size = 8) + theme(axis.text.x=element_text(angle=90, hjust=1))
+```
+
+```{r}
+prop.table(table(fibroblast$functional.cluster, fibroblast$sample), margin = 2)
+```
+
+
+
+
+
+```{r}
+x <- filter(rna.markers, rna.markers$avg_log2FC > 0.58)
+y <- filter(x, x$p_val_adj < 0.05)
+```
+
+```{r}
+y
+```
+
+

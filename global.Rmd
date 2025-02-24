@@ -1,0 +1,329 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+
+###### Preprocessing Steps
+
+# Load the dataset and create a Seurat Object
+```{r}
+control_dir <- '../data/control/filtered_feature_bc_matrix/'
+control.data <- Read10X(data.dir =control_dir)
+control <- CreateSeuratObject(counts = control.data[["Gene Expression"]])
+control[["ADT"]] <- CreateAssayObject(counts = control.data[["Antibody Capture"]])
+control$condition <- "Control"
+
+CD40_dir <- '../data/anti-CD40/filtered_feature_bc_matrix/'
+CD40.data <- Read10X(data.dir =CD40_dir)
+CD40 <- CreateSeuratObject(counts = CD40.data[["Gene Expression"]])
+CD40[["ADT"]] <- CreateAssayObject(counts = CD40.data[["Antibody Capture"]])
+CD40$condition <- "antiCD40"
+
+sample <- merge(control, y = c(CD40))
+```
+
+# Look at the features
+```{r}
+sample[["percent.mt"]] <- PercentageFeatureSet(sample, pattern = "^mt-")
+VlnPlot(sample, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0, group.by = "condition")
+VlnPlot(sample, features = c("nFeature_ADT", "nCount_ADT"), ncol = 2, pt.size = 0, group.by = "condition")
+```
+
+```{r}
+sample
+```
+
+```{r}
+sample2 <- subset(sample, subset = nCount_RNA > 1000 & nCount_RNA < 30000 & percent.mt < 25)
+```
+
+```{r}
+VlnPlot(sample2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sample2
+```
+
+# SCTransform and filtering
+```{r}
+DefaultAssay(sample2) <- 'RNA'
+sample2 <- SCTransform(sample2, vars.to.regress = c("percent.mt", "nCount_RNA"), verbose = TRUE)
+sample2 <- RunPCA(sample2, features = VariableFeatures(object = sample2), npcs=100, verbose=TRUE)
+```
+
+```{r}
+DefaultAssay(sample2) <- 'ADT'
+VariableFeatures(sample2) <- rownames(sample2[["ADT"]])
+sample2 <- NormalizeData(sample2, normalization.method = 'CLR', margin = 2) %>% 
+  ScaleData() %>% RunPCA(reduction.name = 'apca', npcs=100)
+```
+
+# Harmony Batch Correction
+```{r}
+sample2 <- RunHarmony(sample2, c("condition"), reduction = "pca", reduction.save = "harmony_rna", assay.use = "SCT")
+sample2 <- RunUMAP(sample2, reduction = "harmony_rna", dims = 1:50)
+sample2 <- FindNeighbors(sample2, reduction = "harmony_rna", dims = 1:50)
+sample2 <- FindClusters(sample2, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.3, 0.5, 0.7, 0.9), verbose = FALSE)
+```
+
+```{r}
+DimPlot(sample2, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.7", cols = paletteDiscrete(unique(sample2$SCT_snn_res.0.7), set = "stallion"))
+```
+
+```{r}
+DimPlot(sample2, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.7", cols = paletteDiscrete(unique(sample2$SCT_snn_res.0.7), set = "stallion"), split.by = "condition")
+```
+
+```{r}
+ggplot(sample2@meta.data, aes(x=condition, fill=SCT_snn_res.0.7)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +  scale_fill_manual(values=as.vector(paletteDiscrete(unique(sample2$SCT_snn_res.0.7), set = "stallion"))) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+```{r}
+Idents(sample2) <- "SCT_snn_res.0.7"
+DefaultAssay(sample2) <- 'SCT'
+rna.markers <- FindAllMarkers(sample2, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_RNA_SCT_snn_res.0.7.csv", quote = FALSE)
+```
+
+```{r}
+saveRDS(sample2, "integrated_global_v1.rds")
+```
+
+```{r}
+VlnPlot(sample2, features = "nCount_RNA", group.by = "SCT_snn_res.0.7")
+VlnPlot(sample2, features = "percent.mt", group.by = "SCT_snn_res.0.7")
+```
+
+```{r}
+sample <- readRDS("./v1/integrated_global_v1.rds")
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "0") {"Myeloid"} 
+  else if (x == "1") {"Myeloid"}
+  else if (x == "2") {"Neutrophil"}
+  else if (x == "3") {"BCells"}
+  else if (x == "4") {"Myeloid"}
+  else if (x == "5") {"Myeloid"}
+  else if (x == "6") {"TNK"}
+  else if (x == "7") {"Myeloid"}
+  else if (x == "8") {"Junk"}
+  else if (x == "9") {"TNK"}
+  else if (x == "10") {"Proliferating"}
+  else if (x == "11") {"Junk"}
+  else if (x == "12") {"Myeloid"}
+  else if (x == "13") {"BCells"}
+  else if (x == "14") {"Myeloid"}
+  else if (x == "15") {"Junk"}
+  else if (x == "16") {"Junk"}
+  else if (x == "17") {"Junk"}
+  else if (x == "18") {"Myeloid"}
+  else if (x == "19") {"Myeloid"}
+}
+sample$cell.type1 <- mapply(fun, sample$SCT_snn_res.0.7)
+```
+
+```{r}
+Idents(sample) <- "cell.type1"
+Myeloid <- subset(sample, idents = c("Myeloid","Neutrophil"))
+TNK <- subset(sample, idents = "TNK")
+BCells <- subset(sample, idents = "BCells")
+```
+
+# Myeloid
+```{r}
+Myeloid <- RunUMAP(Myeloid, reduction = "harmony_rna", dims = 1:50)
+Myeloid <- FindNeighbors(Myeloid, reduction = "harmony_rna", dims = 1:50)
+Myeloid <- FindClusters(Myeloid, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.5, 0.7, 1.0), verbose = FALSE)
+```
+
+```{r}
+DimPlot(Myeloid, reduction = 'umap', label = TRUE, label.size = 4, group.by = "SCT_snn_res.1", cols = paletteDiscrete(unique(Myeloid$SCT_snn_res.1), set = "stallion"), ncol = 2)
+```
+
+```{r}
+Idents(Myeloid) <- "SCT_snn_res.1"
+DefaultAssay(Myeloid) <- 'SCT'
+rna.markers <- FindAllMarkers(Myeloid, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./v2/myeloid/myeloid_SCT_snn_res.1.csv", quote = FALSE)
+```
+
+# TNK
+```{r}
+TNK <- RunUMAP(TNK, reduction = "harmony_rna", dims = 1:50)
+TNK <- FindNeighbors(TNK, reduction = "harmony_rna", dims = 1:50)
+TNK <- FindClusters(TNK, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.5, 0.7, 1.0), verbose = FALSE)
+```
+
+```{r}
+DimPlot(TNK, reduction = 'umap', label = TRUE, label.size = 4, group.by = "SCT_snn_res.1", cols = paletteDiscrete(unique(TNK$SCT_snn_res.1), set = "stallion"), ncol = 2)
+```
+
+```{r}
+Idents(TNK) <- "SCT_snn_res.1"
+DefaultAssay(TNK) <- 'SCT'
+rna.markers <- FindAllMarkers(TNK, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./v2/TNK/TNK_SCT_snn_res.1.csv", quote = FALSE)
+```
+
+# BCells
+```{r}
+BCells <- RunUMAP(BCells, reduction = "harmony_rna", dims = 1:50)
+BCells <- FindNeighbors(BCells, reduction = "harmony_rna", dims = 1:50)
+BCells <- FindClusters(BCells, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.5, 0.7, 1.0), verbose = FALSE)
+```
+
+```{r}
+DimPlot(BCells, reduction = 'umap', label = TRUE, label.size = 4, group.by = "SCT_snn_res.1", cols = paletteDiscrete(unique(BCells$SCT_snn_res.1), set = "stallion"), ncol = 2)
+```
+
+```{r}
+Idents(BCells) <- "SCT_snn_res.1"
+DefaultAssay(BCells) <- 'SCT'
+rna.markers <- FindAllMarkers(BCells, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./v2/BCells/BCells_SCT_snn_res.1.csv", quote = FALSE)
+```
+
+```{r}
+saveRDS(BCells, "./v2/BCells/BCells.rds")
+saveRDS(Myeloid, "./v2/Myeloid/Myeloid.rds")
+saveRDS(TNK, "./v2/TNK/TNK.rds")
+```
+
+# Clean
+```{r}
+Idents(BCells) <- "SCT_snn_res.1"
+BCells <- subset(BCells, idents = c("1","6","7"), invert = TRUE)
+
+Idents(Myeloid) <- "SCT_snn_res.1"
+Myeloid <- subset(Myeloid, idents = c("11","15","2"), invert = TRUE)
+
+Idents(TNK) <- "SCT_snn_res.1"
+TNK <- subset(TNK, idents = c("2","3"), invert = TRUE)
+```
+
+```{r}
+sample <- merge(BCells, y = c(Myeloid, TNK))
+```
+
+# Re-process
+# SCTransform and filtering
+```{r}
+DefaultAssay(sample) <- 'RNA'
+sample <- SCTransform(sample, vars.to.regress = c("percent.mt", "nCount_RNA"), verbose = TRUE)
+sample <- RunPCA(sample, features = VariableFeatures(object = sample), npcs=100, verbose=TRUE)
+```
+
+```{r}
+DefaultAssay(sample) <- 'ADT'
+VariableFeatures(sample) <- rownames(sample[["ADT"]])
+sample <- NormalizeData(sample, normalization.method = 'CLR', margin = 2) %>% 
+  ScaleData() %>% RunPCA(reduction.name = 'apca', npcs=100)
+```
+
+# Harmony Batch Correction
+```{r}
+sample <- RunHarmony(sample, c("condition"), reduction = "pca", reduction.save = "harmony_rna", assay.use = "SCT")
+sample <- RunUMAP(sample, reduction = "harmony_rna", dims = 1:50)
+sample <- FindNeighbors(sample, reduction = "harmony_rna", dims = 1:50)
+sample <- FindClusters(sample, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.3, 0.5, 0.7, 0.9), verbose = FALSE)
+```
+
+```{r}
+DimPlot(sample, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.1", cols = paletteDiscrete(unique(sample$SCT_snn_res.0.1), set = "stallion"), ncol = 2)
+```
+
+```{r}
+Idents(sample) <- "SCT_snn_res.0.1"
+DefaultAssay(sample) <- 'SCT'
+rna.markers <- FindAllMarkers(sample, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./final/DE_SCT_snn_res.0.1.csv", quote = FALSE)
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "0") {"Myeloid"} 
+  else if (x == "1") {"Neutrophil"}
+  else if (x == "2") {"BCells"}
+  else if (x == "3") {"Myeloid"}
+  else if (x == "4") {"TNKCels"}
+  else if (x == "5") {"TNKCels"}
+  else if (x == "6") {"Myeloid"}
+  else if (x == "7") {"Myeloid"}
+}
+sample$cell.type2 <- mapply(fun, sample$SCT_snn_res.0.1)
+```
+
+```{r}
+sample$condition <- factor(sample$condition, levels = c("Control","antiCD40"))
+```
+
+
+```{r}
+DimPlot(sample, reduction = 'umap', label = FALSE, repel = TRUE, label.size = 2.5, group.by = "cell.type2", cols = paletteDiscrete(unique(sample$cell.type2), set = "stallion"), split.by = "condition")
+```
+
+
+```{r}
+VlnPlot(sample, features = "nCount_RNA", group.by = "condition")
+VlnPlot(sample, features = "percent.mt", group.by = "condition")
+```
+
+
+```{r}
+Idents(sample) <- "cell.type2"
+DefaultAssay(sample) <- 'SCT'
+rna.markers <- FindAllMarkers(sample, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_SCT_cell.type2.csv", quote = FALSE)
+```
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DefaultAssay(sample) <- 'SCT'
+Idents(sample) <- "cell.type2"
+DoHeatmap(sample, features = top10$gene, assay = "SCT", group.colors = as.vector(paletteDiscrete(unique(sample$cell.type2), set = "stallion")), size = 1, angle = 90) + NoLegend() + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))
+
+ggsave(filename="heatmap_cell.type2_GEX.png")
+```
+
+```{r}
+DotPlot(sample, features = c("Cd79a","C1qa","Retnlg","Il2rb"), group.by = "cell.type2", col.min = 0, col.max = 1) + RotatedAxis()
+```
+
+```{r}
+sample <- readRDS("./final/global_integrated.rds")
+```
+
+```{r}
+DotPlot(sample, features = c("Cxcl9"), group.by = "cell.type2", col.min = 0.5, col.max = 1, split.by = "condition") + RotatedAxis()
+```
+
+```{r}
+VlnPlot(sample, features = c("Cxcl9"), group.by = "cell.type2",split.by = "condition") + RotatedAxis()
+```
+
+
+```{r}
+DefaultAssay(sample) <- "SCT"
+FeaturePlot(sample, reduction = 'umap', features = "Cxcl9") + scale_color_gradientn(colors=paletteContinuous("solarExtra"), oob=scales::squish, limits=c(0,1))
+```
+
+
+
+

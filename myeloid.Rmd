@@ -1,0 +1,534 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(SeuratDisk)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+
+```{r}
+sample <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Secondary\ Projects/Jesus_antiCD40/global/final/global_integrated.rds")
+```
+
+```{r}
+Idents(sample) <- "cell.type2"
+myeloid <- subset(sample, idents = c("Myeloid"))
+```
+
+```{r}
+myeloid <- RunUMAP(myeloid, reduction = "pca", dims = 1:30)
+myeloid <- FindNeighbors(myeloid, reduction = "pca", dims = 1:30)
+myeloid <- FindClusters(myeloid, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5), verbose = FALSE)
+```
+
+```{r}
+DimPlot(myeloid, reduction = 'umap', label = FALSE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.4", cols = paletteDiscrete(unique(myeloid$SCT_snn_res.0.4), set = "stallion"), ncol = 2)
+```
+
+# Remove cluster 3:
+```{r}
+Idents(myeloid) <- "SCT_snn_res.0.4"
+myeloid <- subset(myeloid, idents = "3", invert = TRUE)
+```
+
+```{r}
+myeloid <- RunUMAP(myeloid, reduction = "pca", dims = 1:30)
+```
+
+```{r}
+DimPlot(myeloid, reduction = 'umap', label = FALSE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.4", cols = paletteDiscrete(unique(myeloid$SCT_snn_res.0.4), set = "stallion"), ncol = 2)
+```
+
+```{r}
+myeloid$condition <- factor(myeloid$condition, levels = c("Control","antiCD40"))
+```
+
+```{r}
+ggplot(myeloid@meta.data, aes(x=condition, fill=SCT_snn_res.0.4)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +  scale_fill_manual(values=as.vector(paletteDiscrete(unique(myeloid$SCT_snn_res.0.4), set = "stallion"))) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+```{r}
+Idents(myeloid) <- "SCT_snn_res.0.4"
+DefaultAssay(myeloid) <- 'SCT'
+rna.markers <- FindAllMarkers(myeloid, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./final/myeloid_DE_SCT_snn_res.0.4.csv", quote = FALSE)
+```
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+Idents(myeloid) <- "SCT_snn_res.0.4"
+
+DoHeatmap(myeloid, features = top10$gene, assay = "SCT", 
+          group.colors = paletteDiscrete(unique(myeloid$SCT_snn_res.0.4), set = "stallion"), size = 2, angle = 90) + NoLegend() + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))+ 
+    theme(text = element_text(size = 5))
+ggsave(filename="./final/heatmap_GEX_myeloid_SCT_snn_res.0.4.png")
+```
+
+```{r}
+DotPlot(myeloid, features = c("Ccl8","Cxcl9","Ccl7","F13a1","Cd163","Lyve1","Ly6a","Ccr2","Mmp14","Plac8","Chil3","Ly6c2","Cxcl10","Cxcl2","Ccl4","Cd209a","Cst3","Lsp1","Fn1","Ifitm6","Ccl5","Il12b","Ear2","Nr4a1","Ace"), group.by = "SCT_snn_res.0.4", col.min = 0, col.max = 1) + RotatedAxis()
+```
+
+```{r}
+DotPlot(myeloid, features = c("Cxcl9","Tnf","Il12b","Ccr2"), group.by = "condition", col.min = 0, col.max = 1) + RotatedAxis()
+```
+
+```{r}
+VlnPlot(myeloid, features = "Cxcl9", group.by = "condition")
+```
+
+
+# Create a z-score for each majorcell state
+
+# 0
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Ccl8","Cxcl13","Gbp2b","Ccl12","Cxcl9")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_0<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_0",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 1
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Apoe","Pf4","Selenop","Trf","Dab2")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_1<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_1",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 2
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Ly6a","Ly6i","AW112010","AA467197","Ass1")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_2<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_2",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 3
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Gm42418","Lars2","AY036118","Gm26917","mt-Co2")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_3<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_3",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 4
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Plac8","Chil3","Ly6c2","Tnfaip2","S100a8")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_4<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_4",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 5
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Cxcl2","Cxcl10","Ccl4","Btg2","Klf6")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_5<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_5",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 6
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Cd209a","Cst3","Lsp1","Napsa","Id2")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_6<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_6",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+# 7
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Fn1","Chil3","Ifitm6","Plac8","Ly6c2")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_7<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_7",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+
+# 8
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Ccl5","Fscn1","Ccl22","Traf1","Zmynd15")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_8<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_8",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+
+# 9
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- c("Ear2","Gngt2","Itgal","Nr4a1","Ace")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$z_9<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "z_9",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+```{r}
+VlnPlot(myeloid, features = c("z_0","z_1","z_2","z_3","z_4","z_5","z_6","z_7","z_8","z_9"), group.by = "SCT_snn_res.0.4", split.by = "condition")
+```
+
+```{r}
+FeaturePlot(object=myeloid, features = "z_0", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_0.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_1", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_1.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_2", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_2.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_3", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_3.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_4", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_4.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_5", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_5.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_6", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_6.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_7", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_7.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_8", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_8.png", height = 3, width = 6)
+FeaturePlot(object=myeloid, features = "z_9", pt.size=.5, reduction = 'umap', split.by = "condition")
+ggsave("z_9.png", height = 3, width = 6)
+```
+
+```{r}
+Idents(myeloid) <- "condition"
+DefaultAssay(myeloid) <- 'SCT'
+rna.markers <- FindAllMarkers(myeloid, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./final/myeloid_DE_condition.csv", quote = FALSE)
+```
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 100, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DoHeatmap(subset(myeloid, downsample = 900), features = top10$gene, size = 3) + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))
+```
+
+
+```{r}
+myeloid$condition <- as.character(myeloid$condition)
+```
+
+```{r}
+SaveH5Seurat(myeloid, filename = "./myeloid.h5Seurat")
+```
+
+```{r}
+Convert("./myeloid.h5Seurat", dest = "h5ad")
+```
+
+```{r}
+rna.markers <- filter(rna.markers, rna.markers$cluster == "antiCD40")
+```
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+```
+
+```{r}
+top10$gene
+```
+
+
+# CD40 score
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+expdata <- GetAssayData(myeloid)
+Pop1 <- rna.markers$gene
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+myeloid@meta.data$antiCD40z<-z_scores[1,]
+FeaturePlot(object=myeloid, features = "antiCD40z",pt.size=.5, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,0.75))
+```
+
+```{r}
+VlnPlot(myeloid, features = "antiCD40z", group.by = "SCT_snn_res.0.4", cols = paletteDiscrete(unique(myeloid$SCT_snn_res.0.4), set = "stallion"), sort = TRUE)
+```
+
+```{r}
+DefaultAssay(myeloid) <- "SCT"
+FeaturePlot(myeloid, reduction = 'umap', features = "Cxcl9") + scale_color_gradientn(colors=paletteContinuous("solarExtra"), oob=scales::squish, limits=c(0,1))
+```
+
+```{r}
+plot_density(myeloid, reduction = 'umap', features = "Ccr2")
+plot_density(myeloid, reduction = 'umap', features = "Cxcl9")
+plot_density(myeloid, reduction = 'umap', features = "Tnf")
+plot_density(myeloid, reduction = 'umap', features = "Il12b")
+```
+
+```{r}
+DefaultAssay(myeloid) <- "ADT"
+FeaturePlot(myeloid, reduction = 'umap', features = "CD40-TotalSeqA") + scale_color_gradientn(colors=paletteContinuous("blueYellow"), oob=scales::squish, limits=c(0,3.5))
+```
+
+# Pathway analysis across clusters
+```{r}
+library(clusterProfiler)
+library(DOSE)
+library(enrichplot)
+library(ReactomePA)
+library(ggplot2)
+```
+
+```{r}
+d <- read.csv("./myeloid_DE_condition.csv")
+d <- filter(d, avg_log2FC > 0.58)
+d <- filter(d, p_val_adj < 0.05)
+d_new <- d[c("gene", "cluster")]
+```
+
+```{r}
+eg <- bitr(as.character(d_new$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+d_new <- filter(d_new, gene %in% eg$SYMBOL)
+d_new_enterzID <- merge(d_new, eg, by.x = "gene", by.y = "SYMBOL")
+d_new_enterzID <- d_new_enterzID[c("ENTREZID", "cluster")]
+geneList <- unstack(d_new_enterzID)
+geneList
+```
+
+```{r}
+ck <- compareCluster(geneCluster = geneList, fun = enrichGO, OrgDb="org.Mm.eg.db")
+ck <- setReadable(ck, OrgDb = "org.Mm.eg.db", keyType="ENTREZID")
+head(ck) 
+```
+
+```{r}
+ego2 <- enrichGO(gene         = geneList$antiCD40,
+                OrgDb         = "org.Mm.eg.db",
+                keyType       = 'ENTREZID',
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+head(summary(ego2))
+```
+
+
+```{r}
+dotplot(ego2, font.size = 8) + theme(axis.text.x=element_text(angle=90, hjust=1))
+```
+
+```{r}
+prop.table(table(fibroblast$functional.cluster, fibroblast$sample), margin = 2)
+```
+
+```{r}
+myelid <- readRDS("./final/myeloid.rds")
+```
+
+```{r}
+x <- filter(rna.markers, rna.markers$avg_log2FC > 0.58)
+y <- filter(x, x$p_val_adj < 0.05)
+```
+
+```{r}
+y
+```
+
+
+
+```{r}
+de <- rna.markers
+de$avg_log2FC <- ifelse(de$cluster == "Control", -de$avg_log2FC, de$avg_log2FC)
+
+# add a column of NAs
+de$diffexpressed <- "NO"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP" 
+de$diffexpressed[de$avg_log2FC > 0.58 & de$p_val_adj < 0.05] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+de$diffexpressed[de$avg_log2FC < -0.58 & de$p_val_adj < 0.05] <- "DOWN"
+
+de$delabel <- NA
+de$delabel[de$diffexpressed != "NO"] <- de$gene[de$diffexpressed != "NO"]
+de
+```
+
+```{r}
+library(ggrepel)
+# plot adding up all layers we have seen so far
+ggplot(data=de, aes(x=avg_log2FC, y=-log10(p_val_adj), col=diffexpressed, label = delabel)) +
+        geom_point() + 
+        theme_minimal() +
+        geom_text_repel() +
+        scale_color_manual(values=c("blue", "black", "red")) +
+        geom_vline(xintercept=c(-0.58, 0.58), col="red") +
+        geom_hline(yintercept=-log10(0.05), col="red")
+```
